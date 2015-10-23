@@ -5,6 +5,8 @@ import Data.List (foldl')
 import Prelude hiding (lookup)
 import Data.Map hiding ((!), map, foldl, foldl', foldr, filter)
 import Data.Maybe (fromMaybe)
+import Graphics.Gloss.Interface.Pure.Simulate
+import Data.Monoid
 
 type Position = (Int, Int)
 
@@ -43,6 +45,9 @@ isObstacle :: Terrain -> Bool
 isObstacle Obstacle = True
 isObstacle _ = False
 
+fps = 60
+cellDimI = 16
+cellDim = fromIntegral cellDimI
 dimx = 100
 dimy = 100
 nestPos = (2,2)
@@ -117,8 +122,8 @@ placePheromone (Ant (Searching pheromone) pos _) terrain | isEmpty (lookupTerrai
 placePheromone _ x = x
 
 evaporatePheromone :: Terrain -> Terrain --TODO exponential or something
-evaporatePheromone (Empty nestPheromone foodPheromone) = Empty (max 0 $ nestPheromone * 19 `div` 20) -- - nestPheromoneEvaporation)
-                                                               (max 0 $ foodPheromone * 19 `div` 20) -- - foodPheromoneEvaporation)
+evaporatePheromone (Empty nestPheromone foodPheromone) = Empty (max 0 $ (nestPheromone * 60 `div` 61) -nestPheromoneEvaporation) -- - nestPheromoneEvaporation)
+                                                               (max 0 $ (foodPheromone * 60 `div` 61) -foodPheromoneEvaporation) -- - foodPheromoneEvaporation)
 evaporatePheromone x = x
 
 takeFood :: Ant -> (Map Position Terrain, [Ant]) -> (Map Position Terrain, [Ant])
@@ -136,8 +141,8 @@ placeFood (Ant (HasFood _) pos rand) (terrain, ants) | pos==nestPos =
     where ant' = Ant (Searching initialNestPheromone) pos rand
 placeFood a (t, as) = (t, a:as)
 
-simulate :: (Map Position Terrain, [Ant]) -> (Map Position Terrain, [Ant])
-simulate = id
+step :: a -> b -> (Map Position Terrain, [Ant]) -> (Map Position Terrain, [Ant])
+step _ _ = id
          . force --avoid memory leaks
          . mapFst (fmap evaporatePheromone)
          . (\(t, as) -> (foldl' (flip placePheromone) t as, as))
@@ -154,12 +159,32 @@ printAll terrain ants = do
   --putStrLn $ show ants
   return ()
 
-simulateIO :: Map Position Terrain -> [Ant] -> IO ()
+{-simulateIO :: Map Position Terrain -> [Ant] -> IO ()
 simulateIO terrain ants = do
   let (terrain', ants') = simulate (terrain, ants)
   printAll terrain' ants'
   threadDelay 100000
-  simulateIO terrain' ants'
+  simulateIO terrain' ants'-}
+
+draw :: (Map Position Terrain, [Ant]) -> Picture
+draw (terrain, ants) = terrainP <> nestP <> antsP
+  where terrainP = Pictures $ fmap (uncurry terrain2pic) $ toList terrain
+        antsP = Pictures $ fmap ant2pic ants
+        nestP = Translate (zoom $ fst nestPos) (zoom $ snd nestPos) $ Color white $ rectangleSolid cellDim cellDim
+
+terrain2pic :: Position -> Terrain -> Picture
+terrain2pic (x,y) Obstacle = Translate (zoom x) (zoom y) $ Color (greyN 0.5) $ rectangleSolid cellDim cellDim
+terrain2pic (x,y) (Food _) = Translate (zoom x) (zoom y) $ Color yellow $ rectangleSolid cellDim cellDim
+terrain2pic (x,y) (Empty fn ff) = Translate (zoom x) (zoom y) $
+                                    Color (makeColorI (ff*255 `div` maxFoodPheromone) 0 (fn*255 `div` maxNestPheromone) 255) $
+                                      rectangleSolid cellDim cellDim
+
+zoom x = fromIntegral x * cellDim
+
+ant2pic :: Ant -> Picture
+ant2pic (Ant _ (x,y) _) = Translate x' y' $ Color green $ Circle (cellDim / 2 -1)
+  where x' = fromIntegral x * cellDim
+        y' = fromIntegral y * cellDim
 
 main :: IO ()
 main = do
@@ -168,7 +193,13 @@ main = do
   gen <- getStdGen
   let rands = map mkStdGen $ randoms gen
   let ants = take nants $ map defAnt rands
-  simulateIO terrain ants
+  simulate (InWindow "Ant" (cellDimI * fromIntegral dimx, cellDimI * dimy) (0,0))
+           black
+           fps
+           (terrain, ants)
+           draw
+           step
+  --simulateIO terrain ants
   return ()
 
 mapFst :: (a -> c) -> (a, b) -> (c, b)
