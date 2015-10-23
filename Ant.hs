@@ -1,8 +1,10 @@
-import Data.Matrix
 import Control.Concurrent (threadDelay)
 import System.Random
 import Control.DeepSeq
 import Data.List (foldl')
+import Prelude hiding (lookup)
+import Data.Map hiding ((!), map, foldl, foldl', foldr, filter)
+import Data.Maybe (fromMaybe)
 
 type Position = (Int, Int)
 
@@ -41,8 +43,8 @@ isObstacle :: Terrain -> Bool
 isObstacle Obstacle = True
 isObstacle _ = False
 
-dimx = 10
-dimy = 10
+dimx = 100
+dimy = 100
 nestPos = (2,2)
 nants = 300
 initialNestPheromone = 20
@@ -55,12 +57,14 @@ nestForgettingRate = 1
 foodForgettingRate = 1
 defActractiveness = 5
 
-defTerrain = setElem (Food 10000) (10,10) $ matrix dimx dimy $ const $ Empty 0 0
+defTerrain = insert (90, 90) (Food 10000) $ empty
 
 defAnt = Ant (Searching initialNestPheromone) nestPos
 
-calcWeight :: Matrix Terrain -> FoodStatus -> Position -> Int
-calcWeight terrain status pos = actractiveness (terrain!pos) status --TODO merge
+lookupTerrain k m = fromMaybe (Empty 0 0) $ lookup k m
+
+calcWeight :: Map Position Terrain -> FoodStatus -> Position -> Int
+calcWeight terrain status pos = actractiveness (lookupTerrain pos terrain) status --TODO merge
 
 actractiveness :: Terrain -> FoodStatus -> Int
 actractiveness Obstacle _ = 0
@@ -84,7 +88,7 @@ inBounds :: (Num a, Num b, Ord a, Ord b) => a -> b -> (a, b) -> Bool
 inBounds mx my (x, y) | x>0 && y>0 && x<=mx && y<=my = True
                       | otherwise = False
 
-moveAnt :: Matrix Terrain -> Ant -> Ant
+moveAnt :: Map Position Terrain -> Ant -> Ant
 moveAnt terrain (Ant antType (x, y) rand) = Ant antType pos rand'
  where (rand', pos) = weightedRandom rand
                    $ fmap (\x -> (calcWeight terrain antType x, x))
@@ -103,13 +107,13 @@ forgetNest :: Ant -> Ant
 forgetNest (Ant (Searching nestPheromone) pos rand) = Ant (Searching $ max 0 $ nestPheromone - nestForgettingRate) pos rand
 forgetNest (Ant (HasFood   foodPheromone) pos rand) = Ant (HasFood $ max 0 $ foodPheromone - foodForgettingRate) pos rand
 
-placePheromone :: Ant -> Matrix Terrain -> Matrix Terrain
-placePheromone (Ant (HasFood   pheromone) pos _) terrain | isEmpty (terrain!pos) =
-  setElem (Empty nestPheromone (min maxFoodPheromone $ foodPheromone + pheromone)) pos terrain
-    where (Empty nestPheromone foodPheromone) = terrain!pos
-placePheromone (Ant (Searching pheromone) pos _) terrain | isEmpty (terrain!pos) =
-  setElem (Empty (min maxNestPheromone $ nestPheromone + pheromone) foodPheromone) pos terrain
-    where (Empty nestPheromone foodPheromone) = terrain!pos
+placePheromone :: Ant -> Map Position Terrain -> Map Position Terrain
+placePheromone (Ant (HasFood   pheromone) pos _) terrain | isEmpty (lookupTerrain pos terrain) =
+  insert pos (Empty nestPheromone (min maxFoodPheromone $ foodPheromone + pheromone)) terrain
+    where (Empty nestPheromone foodPheromone) = lookupTerrain pos terrain
+placePheromone (Ant (Searching pheromone) pos _) terrain | isEmpty (lookupTerrain pos terrain) =
+  insert pos (Empty (min maxNestPheromone $ nestPheromone + pheromone) foodPheromone) terrain
+    where (Empty nestPheromone foodPheromone) = lookupTerrain pos terrain
 placePheromone _ x = x
 
 evaporatePheromone :: Terrain -> Terrain --TODO exponential or something
@@ -117,22 +121,22 @@ evaporatePheromone (Empty nestPheromone foodPheromone) = Empty (max 0 $ nestPher
                                                                (max 0 $ foodPheromone * 19 `div` 20) -- - foodPheromoneEvaporation)
 evaporatePheromone x = x
 
-takeFood :: Ant -> (Matrix Terrain, [Ant]) -> (Matrix Terrain, [Ant])
-takeFood (Ant (Searching _) pos rand) (terrain, ants) | isFood (terrain!pos) =
-  (setElem t' pos terrain, ant':ants)
-    where Food food = terrain!pos --safe
+takeFood :: Ant -> (Map Position Terrain, [Ant]) -> (Map Position Terrain, [Ant])
+takeFood (Ant (Searching _) pos rand) (terrain, ants) | isFood (lookupTerrain pos terrain) =
+  (insert pos t' terrain, ant':ants)
+    where Food food = lookupTerrain pos terrain --safe
           t' | food-1 > 0 = Food $ food-1
              | otherwise = Empty 0 maxFoodPheromone
           ant' = Ant (HasFood initialFoodPheromone) pos rand
 takeFood a (t, as) = (t, a:as)
 
-placeFood :: Ant -> (Matrix Terrain, [Ant]) -> (Matrix Terrain, [Ant])
+placeFood :: Ant -> (Map Position Terrain, [Ant]) -> (Map Position Terrain, [Ant])
 placeFood (Ant (HasFood _) pos rand) (terrain, ants) | pos==nestPos =
   (terrain, ant':ants)
     where ant' = Ant (Searching initialNestPheromone) pos rand
 placeFood a (t, as) = (t, a:as)
 
-simulate :: (Matrix Terrain, [Ant]) -> (Matrix Terrain, [Ant])
+simulate :: (Map Position Terrain, [Ant]) -> (Map Position Terrain, [Ant])
 simulate = id
          . force --avoid memory leaks
          . mapFst (fmap evaporatePheromone)
@@ -142,15 +146,15 @@ simulate = id
          . (\(t, as) -> foldl' (flip placeFood) (t, []) as)
          . (\(t, as) -> foldl' (flip takeFood)  (t, []) as)
 
-printAll :: Matrix Terrain -> [Ant] -> IO ()
+printAll :: Map Position Terrain -> [Ant] -> IO ()
 printAll terrain ants = do
-  let antMatrix = foldr (\(Ant _ pos _) m -> setElem 0 pos m) (matrix dimx dimy $ const 1) ants
-  putStrLn $ prettyMatrix antMatrix
+  let antMatrix = foldr (\(Ant _ pos _) m -> insert pos 0 m) (empty) ants
+  putStrLn $ show antMatrix
   --putStrLn $ prettyMatrix terrain
   --putStrLn $ show ants
   return ()
 
-simulateIO :: Matrix Terrain -> [Ant] -> IO ()
+simulateIO :: Map Position Terrain -> [Ant] -> IO ()
 simulateIO terrain ants = do
   let (terrain', ants') = simulate (terrain, ants)
   printAll terrain' ants'
