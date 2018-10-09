@@ -1,12 +1,13 @@
 import Control.Concurrent (threadDelay)
 import System.Random
 import Control.DeepSeq
-import Data.List (foldl')
+import Data.List (foldl', minimumBy)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Graphics.Gloss.Interface.Pure.Simulate
 import Data.Monoid
+import Data.Function (on)
 
 type Position = (Int, Int)
 
@@ -45,38 +46,51 @@ isObstacle :: Terrain -> Bool
 isObstacle Obstacle = True
 isObstacle _ = False
 
-fps = 60
+isHasFood (HasFood _) = True
+isHasFood _ = False
+
+fps = 40
 cellDimI = 16
 cellDim = fromIntegral cellDimI
-dimx = 100
-dimy = 100
+dimx = 20
+dimy = 20
 nestPos = (2,2)
-nants = 300
-initialNestPheromone = 20
-initialFoodPheromone = 20
+nants = 100
+initialNestPheromone = 200
+initialFoodPheromone = 200
 maxNestPheromone = 1000
 maxFoodPheromone = 1000
 nestPheromoneEvaporation = 3
 foodPheromoneEvaporation = 3
 nestForgettingRate = 1
 foodForgettingRate = 1
-defActractiveness = 5
+defActractiveness = 50
 
-defTerrain = Map.insert (90, 90) (Food 10000) $ Map.empty
+--defTerrain = insert (18, 18) (Food 100) $ empty
+defTerrain = foldr (flip Map.insert (Food 100)) Map.empty [(18, 18), (17, 18), (15, 19), (19, 5), (2, 2), (20, 20)]
 
 defAnt = Ant (Searching initialNestPheromone) nestPos
+
+inverseDistance :: Position -> Position -> Int
+inverseDistance (x1',y1') (x2',y2') = floor $ sqrt ((x1-x2)^2+(y1-y2)^2)
+  where x1 = fromIntegral x1'
+        y1 = fromIntegral y1'
+        x2 = fromIntegral x2'
+        y2 = fromIntegral y2'
+
+nearest xs = fst $ minimumBy (compare `on` snd) $ zip xs (map (inverseDistance nestPos) xs)
 
 lookupTerrain k m = fromMaybe (Empty 0 0) $ Map.lookup k m
 
 calcWeight :: Map Position Terrain -> FoodStatus -> Position -> Int
-calcWeight terrain status pos = actractiveness (lookupTerrain pos terrain) status --TODO merge
+calcWeight terrain status pos = actractiveness pos (lookupTerrain pos terrain) status --TODO merge
 
-actractiveness :: Terrain -> FoodStatus -> Int
-actractiveness Obstacle _ = 0
-actractiveness (Food n) (Searching _) = n*1000 + defActractiveness
-actractiveness (Empty nestPheromone _) (HasFood _) = nestPheromone + defActractiveness
-actractiveness (Empty _ foodPheromone) (Searching _) = foodPheromone + defActractiveness
-actractiveness _ _ = defActractiveness
+actractiveness :: Position -> Terrain -> FoodStatus -> Int
+actractiveness _ Obstacle _ = 0
+actractiveness _ (Food n) (Searching _) = n*1000 + defActractiveness
+actractiveness pos (Empty nestPheromone _) (HasFood _) = inverseDistance pos nestPos
+actractiveness _ (Empty _ foodPheromone) (Searching _) = foodPheromone + defActractiveness
+actractiveness _ _ _ = defActractiveness
 
 weightedRandom :: StdGen -> [(Int, a)] -> (StdGen, a)
 weightedRandom rand xs = (rand', x)
@@ -94,8 +108,9 @@ inBounds mx my (x, y) | x>0 && y>0 && x<=mx && y<=my = True
                       | otherwise = False
 
 moveAnt :: Map Position Terrain -> Ant -> Ant
-moveAnt terrain (Ant antType (x, y) rand) = Ant antType pos rand'
- where (rand', pos) = weightedRandom rand
+moveAnt terrain (Ant antType (x, y) rand) = Ant antType pos'' rand''
+ where (rand'',pos'') = if isHasFood antType then (rand, nearest [ (x+1, y), (x-1, y), (x, y+1), (x, y-1), (x+1, y+1), (x-1, y-1), (x+1, y-1), (x-1, y+1)]) else (rand',pos)
+       (rand', pos) = weightedRandom rand
                    $ fmap (\x -> (calcWeight terrain antType x, x))
                    $ filter (inBounds dimx dimy)
                    [ (x+1, y)
