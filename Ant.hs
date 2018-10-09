@@ -2,8 +2,8 @@ import Control.Concurrent (threadDelay)
 import System.Random
 import Control.DeepSeq
 import Data.List (foldl')
-import Prelude hiding (lookup)
-import Data.Map hiding ((!), map, foldl, foldl', foldr, filter)
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Graphics.Gloss.Interface.Pure.Simulate
 import Data.Monoid
@@ -62,11 +62,11 @@ nestForgettingRate = 1
 foodForgettingRate = 1
 defActractiveness = 5
 
-defTerrain = insert (90, 90) (Food 10000) $ empty
+defTerrain = Map.insert (90, 90) (Food 10000) $ Map.empty
 
 defAnt = Ant (Searching initialNestPheromone) nestPos
 
-lookupTerrain k m = fromMaybe (Empty 0 0) $ lookup k m
+lookupTerrain k m = fromMaybe (Empty 0 0) $ Map.lookup k m
 
 calcWeight :: Map Position Terrain -> FoodStatus -> Position -> Int
 calcWeight terrain status pos = actractiveness (lookupTerrain pos terrain) status --TODO merge
@@ -114,10 +114,10 @@ forgetNest (Ant (HasFood   foodPheromone) pos rand) = Ant (HasFood $ max 0 $ foo
 
 placePheromone :: Ant -> Map Position Terrain -> Map Position Terrain
 placePheromone (Ant (HasFood   pheromone) pos _) terrain | isEmpty (lookupTerrain pos terrain) =
-  insert pos (Empty nestPheromone (min maxFoodPheromone $ foodPheromone + pheromone)) terrain
+  Map.insert pos (Empty nestPheromone (min maxFoodPheromone $ foodPheromone + pheromone)) terrain
     where (Empty nestPheromone foodPheromone) = lookupTerrain pos terrain
 placePheromone (Ant (Searching pheromone) pos _) terrain | isEmpty (lookupTerrain pos terrain) =
-  insert pos (Empty (min maxNestPheromone $ nestPheromone + pheromone) foodPheromone) terrain
+  Map.insert pos (Empty (min maxNestPheromone $ nestPheromone + pheromone) foodPheromone) terrain
     where (Empty nestPheromone foodPheromone) = lookupTerrain pos terrain
 placePheromone _ x = x
 
@@ -128,7 +128,7 @@ evaporatePheromone x = x
 
 takeFood :: Ant -> (Map Position Terrain, [Ant]) -> (Map Position Terrain, [Ant])
 takeFood (Ant (Searching _) pos rand) (terrain, ants) | isFood (lookupTerrain pos terrain) =
-  (insert pos t' terrain, ant':ants)
+  (Map.insert pos t' terrain, ant':ants)
     where Food food = lookupTerrain pos terrain --safe
           t' | food-1 > 0 = Food $ food-1
              | otherwise = Empty 0 maxFoodPheromone
@@ -153,7 +153,7 @@ step _ _ = id
 
 printAll :: Map Position Terrain -> [Ant] -> IO ()
 printAll terrain ants = do
-  let antMatrix = foldr (\(Ant _ pos _) m -> insert pos 0 m) (empty) ants
+  let antMatrix = foldr (\(Ant _ pos _) m -> Map.insert pos 0 m) (Map.empty) ants
   putStrLn $ show antMatrix
   --putStrLn $ prettyMatrix terrain
   --putStrLn $ show ants
@@ -168,7 +168,7 @@ simulateIO terrain ants = do
 
 draw :: (Map Position Terrain, [Ant]) -> Picture
 draw (terrain, ants) = terrainP <> nestP <> antsP
-  where terrainP = Pictures $ fmap (uncurry terrain2pic) $ toList terrain
+  where terrainP = Pictures $ fmap (uncurry terrain2pic) $ Map.toList terrain
         antsP = Pictures $ fmap ant2pic ants
         nestP = Translate (zoom $ fst nestPos) (zoom $ snd nestPos) $ Color white $ rectangleSolid cellDim cellDim
 
